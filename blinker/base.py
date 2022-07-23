@@ -16,6 +16,7 @@ from blinker._utilities import (
     WeakTypes,
     defaultdict,
     hashable_identity,
+    is_coroutine_function,
     lazy_property,
     reference,
     symbol,
@@ -231,7 +232,7 @@ class Signal(object):
              DeprecationWarning)
         return self.connected_to(receiver, sender)
 
-    def send(self, *sender, **kwargs):
+    def send(self, *sender, _async_wrapper = None, **kwargs):
         """Emit this signal on behalf of *sender*, passing on ``kwargs``.
 
         Returns a list of 2-tuples, pairing receivers with their return
@@ -239,9 +240,45 @@ class Signal(object):
 
         :param sender: Any object or ``None``.  If omitted, synonymous
           with ``None``.  Only accepts one positional argument.
+        :param _async_wrapper: A callable that should wrap a coroutine
+          receiver and run it when called synchronously.
 
         :param kwargs: Data to be sent to receivers.
         """
+        sender = self._extract_sender(sender)
+        results = []
+        for receiver in self.receivers_for(sender):
+            if is_coroutine_function(receiver):
+                if _async_wrapper is None:
+                    raise RuntimeError("Cannot send to a coroutine function")
+                receiver = _async_wrapper(receiver)
+            results.append((receiver, receiver(sender, **kwargs)))
+        return results
+
+    async def send_async(self, *sender, _sync_wrapper = None, **kwargs):
+        """Emit this signal on behalf of *sender*, passing on ``kwargs``.
+
+        Returns a list of 2-tuples, pairing receivers with their return
+        value. The ordering of receiver notification is undefined.
+
+        :param sender: Any object or ``None``.  If omitted, synonymous
+          with ``None``. Only accepts one positional argument.
+        :param _sync_wrapper: A callable that should wrap a synchronous
+          receiver and run it when awaited.
+
+        :param kwargs: Data to be sent to receivers.
+        """
+        sender = self._extract_sender(sender)
+        results = []
+        for receiver in self.receivers_for(sender):
+            if is_coroutine_function(receiver):
+                if _sync_wrapper is None:
+                    raise RuntimeError("Cannot send to a non-coroutine function")
+                receiver = _sync_wrapper(receiver)
+            results.append((receiver, await receiver(sender, **kwargs)))
+        return results
+
+    def _extract_sender(self, sender):
         if not self.receivers:
             # Ensure correct signature even on no-op sends, disable with -O
             # for lowest possible cost.
@@ -260,8 +297,7 @@ class Signal(object):
                             '%s given' % len(sender))
         else:
             sender = sender[0]
-        return [(receiver, receiver(sender, **kwargs))
-                for receiver in self.receivers_for(sender)]
+        return sender
 
     def has_receivers_for(self, sender):
         """True if there is probably a receiver for *sender*.
