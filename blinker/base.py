@@ -271,7 +271,7 @@ class Signal(object):
         sender = self._extract_sender(sender)
         results = []
         for receiver in self.receivers_for(sender):
-            if is_coroutine_function(receiver):
+            if not is_coroutine_function(receiver):
                 if _sync_wrapper is None:
                     raise RuntimeError("Cannot send to a non-coroutine function")
                 receiver = _sync_wrapper(receiver)
